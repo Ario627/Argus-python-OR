@@ -4,8 +4,10 @@ import time
 from app.schemas.request import SolveRequest
 from app.schemas.response import Route, SkippedDestination, SolveResponse, Stop
 
+
 def _build_lookup(request: SolveRequest) -> dict[tuple[str, str], dict]:
     return {(r.from_, r.to): {"meters": r.meters, "seconds": r.seconds} for r in request.distanceMatrix.rows}
+
 
 def _avg_meters(lookup: dict) -> float:
     return sum(r["meters"] for r in lookup.values()) / len(lookup) if lookup else 1000.0
@@ -16,7 +18,7 @@ def _avg_seconds(lookup: dict) -> float:
 
 
 def _is_low_volume(dest, constraints) -> bool:
-    return dest.historicalVolumeAvg < constraints.lowVolumeThreshold
+    return dest.lowVolumeFlag
 
 
 def generate_stub(request: SolveRequest) -> SolveResponse:
@@ -49,6 +51,11 @@ def generate_stub(request: SolveRequest) -> SolveResponse:
         stops: list[Stop] = []
         cum_km = 0.0
         cum_secs = 0
+        
+        first_key = (vehicles[v_idx].id, dests[0].id)
+        first_row = lookup.get(first_key, {})
+        cum_km += first_row.get("meters", fallback_m) / 1000
+        cum_secs += int(first_row.get("seconds", fallback_s))
         for order, dest in enumerate(dests, 1):
             stops.append(Stop(
                 destId=dest.id,

@@ -1,15 +1,19 @@
 from ortools.constraint_solver import pywrapcp, routing_enums_pb2
+
 from app.config import settings
 from app.core.exceptions import IncompleteDistanceMatrixError
 from app.schemas.request import SolveRequest
 
+
 def _build_distance_lookup(request: SolveRequest) -> dict[tuple[str, str], dict]:
     return {(r.from_, r.to): {"meters": r.meters, "seconds": r.seconds} for r in request.distanceMatrix.rows}
 
+
 def _resolve_depot(depot_id: str, dest_ids: list[str], v_count: int, d_count: int) -> tuple[int, bool]:
-    if depot_id not in dest_ids:
+    if depot_id in dest_ids:
         return v_count + dest_ids.index(depot_id), False
     return v_count + d_count, True
+
 
 def _build_node_ids(vehicle_ids: list[str], dest_ids: list[str], depot_id: str, depot_is_new: bool) -> list[str]:
     ids = vehicle_ids + dest_ids
@@ -17,14 +21,15 @@ def _build_node_ids(vehicle_ids: list[str], dest_ids: list[str], depot_id: str, 
         ids.append(depot_id)
     return ids
 
+
 def _validate_pairs(node_ids: list[str], lookup: dict) -> None:
     for from_id in node_ids:
         for to_id in node_ids:
             if from_id != to_id and (from_id, to_id) not in lookup:
                 raise IncompleteDistanceMatrixError(f"missing distance row: {from_id} -> {to_id}")
-            
 
-def _build_metrices(
+
+def _build_matrices(
     num_nodes: int, node_ids: list[str], lookup: dict, destinations: list, v_count: int
 ) -> tuple[list[list[int]], list[list[int]]]:
     cost_matrix = [[0] * num_nodes for _ in range(num_nodes)]
@@ -43,9 +48,15 @@ def _build_metrices(
     return cost_matrix, time_matrix
 
 
-def _apply_disjunctions(routing, manager, destinations: list, v_count: int, skip_low_volume: bool, threshold: float) -> None:
+def _apply_disjunctions(
+    routing, manager, destinations: list, v_count: int, skip_low_volume: bool, threshold: float, depot_index: int
+) -> None:
     for i, dest in enumerate(destinations):
         node = v_count + i
+        if node == depot_index:
+            # Node ini dipakai sebagai titik akhir (end) wajib untuk semua vehicle,
+            # jadi tidak boleh sekaligus dijadikan node opsional lewat disjunction.
+            continue
         if skip_low_volume and dest.historicalVolumeAvg < threshold:
             routing.AddDisjunction([manager.NodeToIndex(node)], settings.LOW_VOLUME_SKIP_PENALTY)
         else:
@@ -100,6 +111,8 @@ def build_model(
     routing.AddDimension(time_idx, 30 * 60, constraints.maxRouteMinutes * 60, True, "Time")
 
     skip_low = request.mode == "daily_plan" and constraints.skipLowVolume
-    _apply_disjunctions(routing, manager, destinations, len(vehicle_ids), skip_low, constraints.lowVolumeThreshold)
+    _apply_disjunctions(
+        routing, manager, destinations, len(vehicle_ids), skip_low, constraints.lowVolumeThreshold, depot_index
+    )
 
     return manager, routing, index_to_id, {nid: i for i, nid in enumerate(node_ids)}

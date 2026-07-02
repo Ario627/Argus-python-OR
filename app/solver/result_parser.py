@@ -6,8 +6,8 @@ from app.schemas.response import Route, SkippedDestination, SolveResponse, Stop
 _FEASIBLE_MARGIN_MS = 500
 
 
-def _determine_status(routing, duration_ms: int, time_limit_ms: int) -> str:
-    if routing.status() != pywrapcp.RoutingModel.ROUTING_SUCCESS:
+def _determine_status(solution, duration_ms: int, time_limit_ms: int) -> str:
+    if not solution:
         return "NO_SOLUTION"
     return "FEASIBLE" if duration_ms >= time_limit_ms - _FEASIBLE_MARGIN_MS else "OK"
 
@@ -47,10 +47,10 @@ def parse(
     time_limit_ms: int,
     base_epoch: int,
 ) -> SolveResponse:
-    if not solution or routing.status() == pywrapcp.RoutingModel.ROUTING_FAIL:
+    if not solution:
         return SolveResponse(status="NO_SOLUTION", routes=[], skipped=[], solverDurationMs=duration_ms)
 
-    status = _determine_status(routing, duration_ms, time_limit_ms)
+    status = _determine_status(solution, duration_ms, time_limit_ms)
     dist_lookup, time_lookup, dest_map = _build_lookups(request)
     fallback_m = _avg_meters(dist_lookup)
     fallback_s = _avg_seconds(time_lookup)
@@ -90,6 +90,23 @@ def parse(
             cum_km += dist_lookup.get((from_id, to_id), fallback_m) / 1000
             cum_secs += int(time_lookup.get((from_id, to_id), fallback_s))
             index = next_index
+
+        # Node "End" tidak pernah masuk badan loop di atas (loop berhenti sebelum
+        # memprosesnya), padahal kalau finalDepotId sama dengan salah satu destinasi,
+        # vehicle memang benar-benar berakhir/mengunjungi node itu. Tanpa ini, node
+        # tersebut salah dianggap "skipped" walau sebenarnya dikunjungi.
+        end_node = manager.IndexToNode(index)
+        end_dest_id = index_to_id.get(end_node, "")
+        if end_node >= v_count and end_dest_id in dest_map and end_dest_id not in visited:
+            dest = dest_map[end_dest_id]
+            visited.add(end_dest_id)
+            stops.append(Stop(
+                destId=end_dest_id,
+                order=order,
+                etaEpoch=base_epoch + cum_secs,
+                cumulativeKm=round(cum_km, 2),
+            ))
+            order += 1
 
         if stops:
             routes.append(Route(

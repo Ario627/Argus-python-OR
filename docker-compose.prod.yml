@@ -1,0 +1,45 @@
+version: '3.9'
+
+services:
+  solver:
+    image: argus-solver:${VERSION:-latest}
+    container_name: argus-solver-prod
+    restart: always
+    ports:
+      - "8001:8001"
+    environment:
+      PORT: 8001
+      HOST: 0.0.0.0
+      MOCK_MODE: "false"
+      LOG_LEVEL: ${LOG_LEVEL:-WARNING}
+      SOLVER_TIME_LIMIT_DAILY_MS: ${SOLVER_TIME_LIMIT_DAILY_MS:-30000}
+      SOLVER_TIME_LIMIT_RECOVERY_MS: ${SOLVER_TIME_LIMIT_RECOVERY_MS:-5000}
+      LOW_VOLUME_SKIP_PENALTY: ${LOW_VOLUME_SKIP_PENALTY:-100}
+      MANDATORY_PENALTY: ${MANDATORY_PENALTY:-1000000}
+    networks:
+      - argus-network-prod
+    labels:
+      com.argus.component: "optimization"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+networks:
+  argus-network-prod:
+    driver: bridge
